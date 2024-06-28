@@ -70,13 +70,218 @@ class ShredSpaceApp(QMainWindow):
         self.setWindowTitle('ShredSpace - Advanced File Visualizer')
         self.setGeometry(100, 100, 1200, 800)
 
-        # Load FontAwesome
+        # Initialize with a default font
+        self.fa_font = QFont()
+
+        # Try to load FontAwesome font
         font_id = QFontDatabase.addApplicationFont("icons/fontawesome/fontawesome-webfont.ttf")
         if font_id == -1:
             print("Failed to load FontAwesome font.")
         else:
-            fontawesome = QFontDatabase.applicationFontFamilies(font_id)[0]
-            self.fa_font = QFont(fontawesome)
+            self.fa_font = QFont("fontawesome")
+
+        # Create menu bar
+        menubar = self.menuBar()
+        help_menu = menubar.addMenu('Help')
+
+        # Add 'User Manual' action with system icon
+        user_manual_action = QAction(QIcon.fromTheme('help-contents'), 'User Manual', self)
+        user_manual_action.triggered.connect(self.open_user_manual)
+        help_menu.addAction(user_manual_action)
+
+        # Add 'More Info' action with FontAwesome icon
+        fa_icon = chr(0xf05a)  # FontAwesome unicode for 'info-circle'
+        fa_action = QAction(fa_icon + ' More Info', self)
+        fa_action.setFont(self.fa_font)
+        help_menu.addAction(fa_action)
+
+        # Add Dark Mode toggle
+        view_menu = menubar.addMenu('View')
+        dark_mode_action = QAction('Toggle Dark Mode', self)
+        dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        view_menu.addAction(dark_mode_action)
+
+        # Add file type filter
+        self.file_type_filter = QComboBox(self)
+        self.file_type_filter.addItem("All Files")
+        self.file_type_filter.addItem("Images")
+        self.file_type_filter.addItem("Documents")
+        self.file_type_filter.currentIndexChanged.connect(self.filter_files)
+        menubar.setCornerWidget(self.file_type_filter, Qt.TopRightCorner)
+
+        # Add visualization type selector
+        self.visualization_type = QComboBox(self)
+        self.visualization_type.addItem("Matplotlib Treemap")
+        self.visualization_type.addItem("Plotly Treemap")
+        self.visualization_type.currentIndexChanged.connect(self.update_visualization)
+        menubar.setCornerWidget(self.visualization_type, Qt.TopLeftCorner)
+
+        self.text_edit = QTextEdit(self)
+        self.setCentralWidget(self.text_edit)
+
+        # Add load data button
+        self.load_button = QPushButton('Load Data', self)
+        self.load_button.clicked.connect(self.load_data)
+        self.load_button.setGeometry(10, 50, 100, 30)
+
+        # Add matplotlib canvas
+        self.canvas = FigureCanvas(plt.figure())
+        self.setCentralWidget(self.canvas)
+
+        # Add secure deletion options
+        self.deletion_method = QComboBox(self)
+        self.deletion_method.addItem("Zero Fill")
+        self.deletion_method.addItem("Random Fill")
+        self.deletion_method.addItem("DoD 5220.22-M")
+        self.deletion_method.addItem("AES Wipe")
+        self.deletion_method.setGeometry(10, 90, 150, 30)
+
+        self.passes_label = QLabel('Passes:', self)
+        self.passes_label.setGeometry(170, 90, 50, 30)
+
+        self.passes_spinbox = QSpinBox(self)
+        self.passes_spinbox.setRange(1, 35)
+        self.passes_spinbox.setValue(1)
+        self.passes_spinbox.setGeometry(230, 90, 50, 30)
+
+        self.delete_button = QPushButton('Secure Delete', self)
+        self.delete_button.clicked.connect(self.secure_delete)
+        self.delete_button.setGeometry(10, 130, 150, 30)
+
+        self.show()
+def open_user_manual(self):
+    QMessageBox.information(self, "User Manual", "This is the user manual.")
+
+def toggle_dark_mode(self):
+    app = QApplication.instance()
+    if app.styleSheet():
+        app.setStyleSheet("")
+    else:
+        app.setStyleSheet("QMainWindow { background-color: #2e2e2e; color: #ffffff; }")
+
+def filter_files(self):
+    # Implement file filtering logic here
+    pass
+
+def update_visualization(self):
+    # Implement visualization update logic here
+    pass
+
+def load_data(self):
+    options = QFileDialog.Options()
+    file_name, _ = QFileDialog.getOpenFileName(self, "Open Data File", "", "All Files (*);;CSV Files (*.csv)", options=options)
+    if file_name:
+        try:
+            data = pd.read_csv(file_name)
+            self.text_edit.setText(data.to_string())
+            self.visualize_data(data)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
+
+def visualize_data(self, data):
+    if self.visualization_type.currentText() == "Matplotlib Treemap":
+        sizes = data['size'].values
+        labels = data['label'].values
+        squarify.plot(sizes=sizes, label=labels, alpha=.8)
+        plt.axis('off')
+        self.canvas.draw()
+    elif self.visualization_type.currentText() == "Plotly Treemap":
+        fig = px.treemap(data, path=['label'], values='size')
+        fig.show()
+
+def secure_delete(self):
+    file_name, _ = QFileDialog.getOpenFileName(self, "Select File to Delete", "", "All Files (*)")
+    if file_name:
+        method = self.deletion_method.currentText().lower().replace(" ", "_")
+        passes = self.passes_spinbox.value()
+        self.secure_delete_thread = SecureDeleteThread(file_name, method, passes)
+        self.secure_delete_thread.start()
+
+if __name__ == '__main__':
+    app = QApplication([])
+    window = ShredSpaceApp()
+    app.exec_()
+#!/opt/homebrew/bin/python3
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import squarify
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QTextEdit, QMessageBox, QComboBox, QVBoxLayout, QWidget, QPushButton, QFileDialog
+from PyQt5.QtGui import QIcon, QFontDatabase, QFont
+from PyQt5.QtCore import Qt, QThread
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+
+
+class SecureDeleteThread(QThread):
+    def __init__(self, file_path, method, passes):
+        super().__init__()
+        self.file_path = file_path
+        self.method = method
+        self.passes = passes
+
+    def run(self):
+        if self.method == 'zero':
+            self.zero_fill()
+        elif self.method == 'random':
+            self.random_fill()
+        elif self.method == 'dod':
+            self.dod_standard()
+        elif self.method == 'aes':
+            self.aes_wipe()
+        os.remove(self.file_path)
+
+    def zero_fill(self):
+        with open(self.file_path, "ba+", buffering=0) as f:
+            for _ in range(self.passes):
+                f.seek(0)
+                f.write(b'\x00' * os.path.getsize(self.file_path))
+
+    def random_fill(self):
+        with open(self.file_path, "ba+", buffering=0) as f:
+            for _ in range(self.passes):
+                f.seek(0)
+                f.write(os.urandom(os.path.getsize(self.file_path)))
+
+    def dod_standard(self):
+        with open(self.file_path, "ba+", buffering=0) as f:
+            for _ in range(3):  # DoD 5220.22-M standard is 3 passes
+                f.seek(0)
+                f.write(os.urandom(os.path.getsize(self.file_path)))
+
+    def aes_wipe(self):
+        key = os.urandom(32)
+        iv = os.urandom(16)
+        cipher = Cipher(algorithms.AES(key), modes.CFB(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        with open(self.file_path, "ba+", buffering=0) as f:
+            f.seek(0)
+            data = f.read()
+            encrypted_data = encryptor.update(data) + encryptor.finalize()
+            f.seek(0)
+            f.write(encrypted_data)
+
+class ShredSpaceApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+        self.current_directory = None
+
+    def initUI(self):
+        self.setWindowTitle('ShredSpace - Advanced File Visualizer')
+        self.setGeometry(100, 100, 1200, 800)
+
+        # Initialize with a default font
+        self.fa_font = QFont()
+
+        # Try to load FontAwesome font
+        font_id = QFontDatabase.addApplicationFont("icons/fontawesome/fontawesome-webfont.ttf")
+        if font_id == -1:
+            print("Failed to load FontAwesome font.")
+        else:
+            self.fa_font = QFont("fontawesome")
 
         # Create menu bar
         menubar = self.menuBar()
